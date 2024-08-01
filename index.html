@@ -1,0 +1,254 @@
+<html><head>
+<title>Fractal</title>
+<link rel="stylesheet" src="estilos.css" type="text/css">
+</head>
+<body>
+//<canvas id="lienzo"></canvas>
+<script id="shaderVertice" type="x-shader/x-vertex">
+    attribute vec3 posicion;
+    void main() {
+        gl_Position = vec4(posicion, 1.0);
+    }
+</script>
+<script id="shaderFragmento" type="x-shader/x-fragment">
+    precision highp float;
+    uniform vec2 u_resolucion;
+    uniform vec2 u_raton;
+    uniform float u_tiempo;
+    uniform vec2 u_clicks[10];
+    uniform float u_tiemposClicks[10];
+    uniform int u_contadorClicks;
+
+    vec3 paleta(float t) {
+        vec3 a = vec3(0.5, 0.5, 0.5);
+        vec3 b = vec3(0.5, 0.5, 0.5);
+        vec3 c = vec3(1.0, 1.0, 1.0);
+        vec3 d = vec3(0.263,0.416,0.557);
+        return a + b*cos(6.28318*(c*t+d));
+    }
+
+    float ondulacion(vec2 uv, vec2 centro, float tiempo) {
+        float d = length(uv - centro);
+        float t = clamp(tiempo, 0.0, 5.0);
+        float velocidadOnda = 0.2;
+        float radioOnda = t * velocidadOnda;
+        float onda = sin(max(0.0, d - radioOnda) * 20.0) * 0.5 + 0.5;
+        return onda * smoothstep(radioOnda + 0.1, radioOnda, d) * smoothstep(5.0, 0.0, t);
+    }
+
+    void main() {
+        vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolucion.xy) / u_resolucion.y;
+        vec2 raton = (u_raton.xy * 2.0 - u_resolucion.xy) / u_resolucion.y;
+        
+        float t = u_tiempo * 0.1;
+        
+        vec2 uv0 = uv;
+        vec3 colorFinal = vec3(0.0);
+        
+        float distanciaRaton = length(uv - raton);
+        float influenciaRaton = smoothstep(0.5, 0.0, distanciaRaton);
+        
+        float efectoTotalOndulacion = 0.0;
+        for (int i = 0; i < 10; i++) {
+            if (i >= u_contadorClicks) break;
+            vec2 click = (u_clicks[i].xy * 2.0 - u_resolucion.xy) / u_resolucion.y;
+            float tiempoDesdeClick = u_tiempo - u_tiemposClicks[i];
+            efectoTotalOndulacion += ondulacion(uv, click, tiempoDesdeClick);
+        }
+        
+        // Iteraciones fractales
+        for (int i = 0; i < 5; i++) {
+            float d = length(uv) * exp(-length(uv0));
+            
+            vec3 col = paleta(length(uv0) + t + float(i) * 0.05);
+            
+            float remolino = sin(d*8. + t + influenciaRaton * 5.0 + efectoTotalOndulacion * 5.0) / (8.0 + influenciaRaton * 4.0);
+            d = abs(remolino);
+            
+            d = pow(0.01 / d, 1.2);
+            
+            colorFinal += col * d * (1.0 / pow(2.0, float(i)));
+            
+            uv = fract(uv * 1.5) - 0.5;
+        }
+        
+        colorFinal += vec3(1.0, 0.8, 0.6) * smoothstep(0.2, 0.0, distanciaRaton) * 0.5;
+        colorFinal += vec3(0.2, 0.4, 0.8) * efectoTotalOndulacion * 0.5;
+        
+        gl_FragColor = vec4(colorFinal, 1.0);
+    }
+</script>
+<script>
+    const lienzo = document.getElementById('lienzo');
+    const gl = lienzo.getContext('webgl');
+
+    if (!gl) {
+        alert('WebGL no soportado');
+    }
+
+    const programa = gl.createProgram();
+
+    function crearShader(tipo, fuente) {
+        const shader = gl.createShader(tipo);
+        gl.shaderSource(shader, fuente);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error('Error de compilación del shader:', gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        return shader;
+    }
+
+    const shaderVertice = crearShader(gl.VERTEX_SHADER, document.getElementById('shaderVertice').textContent);
+    const shaderFragmento = crearShader(gl.FRAGMENT_SHADER, document.getElementById('shaderFragmento').textContent);
+
+    gl.attachShader(programa, shaderVertice);
+    gl.attachShader(programa, shaderFragmento);
+    gl.linkProgram(programa);
+
+    if (!gl.getProgramParameter(programa, gl.LINK_STATUS)) {
+        console.error('Chequear error', gl.getProgramInfoLog(programa));
+    }
+
+    gl.useProgram(programa);
+
+    const bufferPosicion = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufferPosicion);
+    const posiciones = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+    gl.bufferData(gl.ARRAY_BUFFER, posiciones, gl.STATIC_DRAW);
+
+    const ubicacionPosicion = gl.getAttribLocation(programa, 'posicion');
+    gl.enableVertexAttribArray(ubicacionPosicion);
+    gl.vertexAttribPointer(ubicacionPosicion, 2, gl.FLOAT, false, 0, 0);
+
+    const ubicacionTiempo = gl.getUniformLocation(programa, 'u_tiempo');
+    const ubicacionResolucion = gl.getUniformLocation(programa, 'u_resolucion');
+    const ubicacionRaton = gl.getUniformLocation(programa, 'u_raton');
+    const ubicacionClicks = gl.getUniformLocation(programa, 'u_clicks');
+    const ubicacionTiemposClicks = gl.getUniformLocation(programa, 'u_tiemposClicks');
+    const ubicacionContadorClicks = gl.getUniformLocation(programa, 'u_contadorClicks');
+
+    let ratonX = 0, ratonY = 0;
+    let clicks = [];
+    let tiemposClicks = [];
+
+    let contextoAudio;
+    let osciladoresMelodia = [];
+    let nodosGanancia = [];
+    let nodoReverberacion;
+
+    const notasMelodia = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25];
+
+    function iniciarAudio() {
+        contextoAudio = new (window.AudioContext || window.webkitAudioContext)();
+        nodoReverberacion = contextoAudio.createConvolver();
+
+        const longitudImpulso = 2 * contextoAudio.sampleRate;
+        const impulso = contextoAudio.createBuffer(2, longitudImpulso, contextoAudio.sampleRate);
+        for (let canal = 0; canal < 2; canal++) {
+            const datosImpulso = impulso.getChannelData(canal);
+            for (let i = 0; i < longitudImpulso; i++) {
+                datosImpulso[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / longitudImpulso, 2);
+            }
+        }
+        nodoReverberacion.buffer = impulso;
+        nodoReverberacion.connect(contextoAudio.destination);
+
+        // Crear osciladores y nodos de ganancia para cada nota
+        notasMelodia.forEach((frecuencia, indice) => {
+            const oscilador = contextoAudio.createOscillator();
+            const nodoGanancia = contextoAudio.createGain();
+
+            oscilador.type = 'sine';
+            oscilador.frequency.setValueAtTime(frecuencia, contextoAudio.currentTime);
+            
+            oscilador.connect(nodoGanancia);
+            nodoGanancia.connect(nodoReverberacion);
+            
+            nodoGanancia.gain.setValueAtTime(0, contextoAudio.currentTime);
+            
+            oscilador.start();
+            
+            osciladoresMelodia.push(oscilador);
+            nodosGanancia.push(nodoGanancia);
+        });
+    }
+
+    function tocarNotaMelodia(indice) {
+        if (!contextoAudio) iniciarAudio();
+        const nodoGanancia = nodosGanancia[indice];
+        nodoGanancia.gain.setValueAtTime(0.2, contextoAudio.currentTime);
+        nodoGanancia.gain.exponentialRampToValueAtTime(0.01, contextoAudio.currentTime + 0.5);
+    }
+
+    lienzo.addEventListener('mousemove', (e) => {
+        ratonX = e.clientX;
+        ratonY = lienzo.height - e.clientY;
+    });
+
+    function manejarInteraccion(x, y) {
+        clicks.push([x, lienzo.height - y]);
+        tiemposClicks.push(performance.now() * 0.001);
+        if (clicks.length > 10) {
+            clicks.shift();
+            tiemposClicks.shift();
+        }
+
+        const indiceNota = Math.floor((x / lienzo.width) * notasMelodia.length);
+        tocarNotaMelodia(indiceNota);
+    }
+
+    lienzo.addEventListener('click', (e) => {
+        manejarInteraccion(e.clientX, e.clientY);
+    });
+
+    lienzo.addEventListener('touchstart', manejarToque, false);
+    lienzo.addEventListener('touchmove', manejarToque, false);
+
+    function manejarToque(e) {
+        e.preventDefault();
+        const toque = e.touches[0];
+        ratonX = toque.clientX;
+        ratonY = lienzo.height - toque.clientY;
+        
+        if (e.type === 'touchstart') {
+            manejarInteraccion(ratonX, ratonY);
+        }
+    }
+
+    document.body.addEventListener('touchstart', function() {
+        if (!contextoAudio) {
+            iniciarAudio();
+        }
+    }, false);
+
+    function redimensionarLienzo() {
+        lienzo.width = window.innerWidth;
+        lienzo.height = window.innerHeight;
+        gl.viewport(0, 0, lienzo.width, lienzo.height);
+    }
+
+    window.addEventListener('resize', redimensionarLienzo);
+    redimensionarLienzo();
+
+    function renderizar(tiempo) {
+        tiempo *= 0.001;  // convertir a segundos
+
+        gl.uniform1f(ubicacionTiempo, tiempo);
+        gl.uniform2f(ubicacionResolucion, lienzo.width, lienzo.height);
+        gl.uniform2f(ubicacionRaton, ratonX, ratonY);
+
+        gl.uniform2fv(ubicacionClicks, clicks.flat());
+        gl.uniform1fv(ubicacionTiemposClicks, tiemposClicks);
+        gl.uniform1i(ubicacionContadorClicks, clicks.length);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        requestAnimationFrame(renderizar);
+    }
+
+    requestAnimationFrame(renderizar);
+</script>
+</body>
+</html>
